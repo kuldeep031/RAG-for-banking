@@ -1,0 +1,4 @@
+embedding_model,label_accuracy,sufficient_evidence_rate,citation_hit_rate,avg_answer_similarity,avg_total_seconds,context_precision,faithfulness
+all_minilm_l6_v2,0.6666666666666666,0.9166666666666666,1.0,0.732661376396815,7.175957050000004,,
+bge_small_en_v1_5,0.4166666666666667,1.0,1.0,0.7705955555041631,9.421517274999966,,
+e5_small_v2,0.5833333333333334,1.0,1.0,0.7661521782477697,7.470940508333361,,

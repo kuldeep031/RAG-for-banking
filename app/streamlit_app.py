@@ -1,0 +1,311 @@
+import sys
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config import CHUNKS_DIR, EMBEDDING_MODELS, MODEL_SPECS, RetrievalConfig
+from src.rag_pipeline import SimpleBankingRiskRAG
+
+
+RESULTS_DIR = PROJECT_ROOT / "results"
+RETRIEVAL_SUMMARY_PATH = RESULTS_DIR / "retrieval" / "model_summary.csv"
+ANSWER_SUMMARY_PATH = RESULTS_DIR / "answers" / "model_summary.csv"
+QUESTION_OUTPUTS_PATH = RESULTS_DIR / "answers" / "experiment_outputs.csv"
+
+
+def friendly_model_name(model_key: str) -> str:
+    return EMBEDDING_MODELS.get(model_key, model_key)
+
+
+@st.cache_resource(show_spinner=False)
+def get_pipeline(model_key: str) -> SimpleBankingRiskRAG:
+    return SimpleBankingRiskRAG(RetrievalConfig(embedding_key=model_key))
+
+
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
+def format_metric(value: float, digits: int = 3) -> str:
+    return f"{value:.{digits}f}"
+
+
+def build_evidence_table(rows: list[dict]) -> pd.DataFrame:
+    evidence_df = pd.DataFrame(rows)
+    if evidence_df.empty:
+        return evidence_df
+
+    desired_columns = [
+        "chunk_id",
+        "source_file",
+        "page_no_start",
+        "score",
+        "chunk_text",
+    ]
+    available_columns = [column for column in desired_columns if column in evidence_df.columns]
+    evidence_df = evidence_df[available_columns].copy()
+    if "score" in evidence_df.columns:
+        evidence_df["score"] = evidence_df["score"].map(lambda value: round(float(value), 4))
+    return evidence_df
+
+
+def render_pipeline_output(title: str, output) -> None:
+    decision = output.decision
+    left, right, extra = st.columns([1.1, 1.1, 1.4])
+
+    with left:
+        st.metric("Risk Label", decision.get("risk_label", "Unknown"))
+        st.metric("Evidence Status", decision.get("evidence_status", "unknown"))
+
+    with right:
+        top_score = float(output.retrieved_rows[0]["score"]) if output.retrieved_rows else 0.0
+        st.metric("Top Retrieval Score", format_metric(top_score, 3))
+        st.metric("Total Latency (s)", format_metric(output.timings.get("total_seconds", 0.0), 2))
+
+    with extra:
+        st.caption(title)
+        st.write(decision.get("answer", ""))
+        justification = decision.get("justification", "")
+        if justification:
+            st.caption("Justification")
+            st.write(justification)
+
+    st.caption("Retrieved Evidence")
+    evidence_df = build_evidence_table(output.retrieved_rows)
+    if evidence_df.empty:
+        st.warning("No evidence retrieved.")
+    else:
+        st.dataframe(
+            evidence_df,
+            use_container_width=True,
+            column_config={
+                "chunk_text": st.column_config.TextColumn(width="large"),
+            },
+            hide_index=True,
+        )
+
+
+def render_single_query_tab() -> None:
+    st.subheader("Live Query")
+    model_key = st.selectbox(
+        "Embedding Model",
+        options=list(EMBEDDING_MODELS.keys()),
+        format_func=friendly_model_name,
+        key="single_model_key",
+    )
+    query = st.text_area(
+        "Ask a banking risk question",
+        placeholder="If the board does not review credit risk strategy and policies, what risk level is indicated?",
+        key="single_query",
+        height=120,
+    )
+
+    if st.button("Run Single Model", type="primary"):
+        if not query.strip():
+            st.warning("Enter a question first.")
+            return
+
+        try:
+            with st.spinner("Running retrieval and grounded answer generation..."):
+                output = get_pipeline(model_key).run(query.strip())
+            render_pipeline_output(friendly_model_name(model_key), output)
+        except FileNotFoundError:
+            st.error("Indexes are not built yet. Build them before opening the demo.")
+        except Exception as exc:
+            st.exception(exc)
+
+
+def render_compare_tab() -> None:
+    st.subheader("Compare All Embeddings")
+    compare_query = st.text_area(
+        "Comparison Question",
+        placeholder="What does SR 11-7 say model validation should verify?",
+        key="compare_query",
+        height=120,
+    )
+
+    if st.button("Compare All Models"):
+        if not compare_query.strip():
+            st.warning("Enter a question first.")
+            return
+
+        try:
+            comparison_rows: list[dict] = []
+            outputs: dict[str, object] = {}
+
+            with st.spinner("Running all three embedding pipelines..."):
+                for model_key in EMBEDDING_MODELS:
+                    output = get_pipeline(model_key).run(compare_query.strip())
+                    outputs[model_key] = output
+                    comparison_rows.append(
+                        {
+                            "embedding_model": friendly_model_name(model_key),
+                            "risk_label": output.decision.get("risk_label", "Unknown"),
+                            "evidence_status": output.decision.get("evidence_status", "unknown"),
+                            "top_chunk": output.retrieved_rows[0]["chunk_id"] if output.retrieved_rows else "",
+                            "top_source": output.retrieved_rows[0]["source_file"] if output.retrieved_rows else "",
+                            "top_score": round(float(output.retrieved_rows[0]["score"]), 4)
+                            if output.retrieved_rows
+                            else 0.0,
+                            "total_seconds": round(float(output.timings.get("total_seconds", 0.0)), 2),
+                        }
+                    )
+
+            st.dataframe(pd.DataFrame(comparison_rows), use_container_width=True, hide_index=True)
+
+            for model_key in EMBEDDING_MODELS:
+                with st.expander(friendly_model_name(model_key), expanded=False):
+                    render_pipeline_output(friendly_model_name(model_key), outputs[model_key])
+        except FileNotFoundError:
+            st.error("Indexes are not built yet. Build them before opening the demo.")
+        except Exception as exc:
+            st.exception(exc)
+
+
+def render_benchmark_tab() -> None:
+    st.subheader("Saved Benchmark Results")
+    retrieval_df = load_csv(RETRIEVAL_SUMMARY_PATH)
+    answer_df = load_csv(ANSWER_SUMMARY_PATH)
+    question_outputs_df = load_csv(QUESTION_OUTPUTS_PATH)
+
+    if retrieval_df.empty and answer_df.empty:
+        st.info("Run `python run_experiments.py` to populate benchmark summaries.")
+        return
+
+    if not retrieval_df.empty:
+        retrieval_view = retrieval_df.copy()
+        retrieval_view["embedding_model"] = retrieval_view["embedding_model"].map(friendly_model_name)
+        st.caption("Retrieval Metrics")
+        st.dataframe(retrieval_view, use_container_width=True, hide_index=True)
+
+        retrieval_chart = retrieval_df.set_index("embedding_model")[
+            ["precision_at_3", "recall_at_3", "recall_at_5", "mrr", "ndcg_at_5"]
+        ]
+        st.bar_chart(retrieval_chart)
+
+    if not answer_df.empty:
+        answer_view = answer_df.copy()
+        answer_view["embedding_model"] = answer_view["embedding_model"].map(friendly_model_name)
+        st.caption("Answer / Decision Metrics")
+        st.dataframe(answer_view, use_container_width=True, hide_index=True)
+
+        answer_chart_cols = [col for col in ["label_accuracy", "citation_hit_rate", "avg_answer_similarity", "context_precision", "faithfulness"] if col in answer_df.columns]
+        answer_chart = answer_df.set_index("embedding_model")[answer_chart_cols]
+        st.bar_chart(answer_chart)
+
+        latency_chart = answer_df.set_index("embedding_model")[["avg_total_seconds"]]
+        st.caption("Average End-to-End Latency")
+        st.bar_chart(latency_chart)
+
+    if not question_outputs_df.empty:
+        st.caption("Per-Question Outputs")
+        display_df = question_outputs_df[
+            [
+                "question_id",
+                "embedding_model",
+                "question_type",
+                "risk_label",
+                "expected_risk_label",
+                "evidence_status",
+                "total_seconds",
+            ]
+        ].copy()
+        display_df["embedding_model"] = display_df["embedding_model"].map(friendly_model_name)
+        display_df["total_seconds"] = display_df["total_seconds"].map(lambda value: round(float(value), 2))
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+def render_recommendations_tab() -> None:
+    st.subheader("Cost-Performance Trade-offs & Recommendations")
+    st.write(
+        """
+        **Objective 3 & 4 Analysis**: This section evaluates the trade-offs between performance (accuracy), 
+        latency, and cost (using model parameters and memory footprint as a proxy for local embeddings). 
+        Finally, it recommends the most suitable embedding models for specific banking risk use cases.
+        """
+    )
+    
+    retrieval_df = load_csv(RETRIEVAL_SUMMARY_PATH)
+    answer_df = load_csv(ANSWER_SUMMARY_PATH)
+
+    if retrieval_df.empty or answer_df.empty:
+        st.info("Run `python run_experiments.py` to populate benchmark summaries.")
+        return
+
+    # Merge dataset for unified analysis
+    merged_df = pd.merge(retrieval_df, answer_df, on="embedding_model")
+    
+    # Inject Cost Proxy (Model Params)
+    merged_df["params_millions"] = merged_df["embedding_model"].apply(lambda x: MODEL_SPECS.get(x, {}).get("params_millions", 0))
+    merged_df["memory_mb"] = merged_df["embedding_model"].apply(lambda x: MODEL_SPECS.get(x, {}).get("memory_mb_approx", 0))
+    
+    st.markdown("### 1. Cost proxy vs Accuracy")
+    display_df = merged_df[["embedding_model", "params_millions", "memory_mb", "ndcg_at_5", "label_accuracy", "avg_total_seconds"]].copy()
+    display_df["embedding_model"] = display_df["embedding_model"].map(friendly_model_name)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    
+    # Bubble/Scatter equivalent: Bar chart focusing on Accuracy vs Params
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption("Accuracy (nDCG@5) Comparison")
+        st.bar_chart(merged_df.set_index("embedding_model")["ndcg_at_5"])
+    with col2:
+        st.caption("Cost Proxy (Model Parameters in Millions)")
+        st.bar_chart(merged_df.set_index("embedding_model")["params_millions"])
+
+    # Finding optimal models
+    best_accuracy_model = merged_df.loc[merged_df['ndcg_at_5'].idxmax()]
+    lowest_cost_model = merged_df.loc[merged_df['params_millions'].idxmin()]
+    fastest_model = merged_df.loc[merged_df['avg_total_seconds'].idxmin()]
+    
+    st.markdown("### 2. Recommendations for Banking Risk Use Cases")
+    
+    st.success(f"**Accuracy-Critical Use Case (e.g. Regulatory Audits, High-Risk Scoring):**\n\n"
+               f"**Recommended Model:** {friendly_model_name(best_accuracy_model['embedding_model'])}\n\n"
+               f"**Reason:** Achieved the highest retrieval accuracy (nDCG@5: *{best_accuracy_model['ndcg_at_5']:.3f}*) and "
+               f"answer label accuracy (*{best_accuracy_model['label_accuracy']:.2f}*). In banking compliance, missing a crucial policy "
+               f"can lead to severe penalties, making this the best choice despite higher parameter size (*{best_accuracy_model['params_millions']}M params*).")
+               
+    st.info(f"**Cost/Resource-Constrained Use Case (e.g. High-volume live chatbots, Edge devices):**\n\n"
+            f"**Recommended Model:** {friendly_model_name(lowest_cost_model['embedding_model'])}\n\n"
+            f"**Reason:** Most resource-efficient with only *{lowest_cost_model['params_millions']}M parameters* "
+            f"(takes ~{lowest_cost_model['memory_mb']}MB RAM). Suitable when hardware is limited but still maintains a respectable "
+            f"retrieval baseline.")
+
+    st.warning(f"**Latency-Sensitive Use Case (e.g. Real-time Customer Support):**\n\n"
+               f"**Recommended Model:** {friendly_model_name(fastest_model['embedding_model'])}\n\n"
+               f"**Reason:** Yields the fastest end-to-end response time (*{fastest_model['avg_total_seconds']:.2f} seconds*). "
+               f"Crucial for interactive RAG applications where users expect immediate risk assessments.")
+
+st.set_page_config(page_title="Banking Risk RAG", layout="wide")
+st.title("Banking Risk RAG Demo")
+st.caption(
+    "Simple RAG for banking risk assessment with local embeddings, FAISS, Ollama, and evaluation summaries."
+)
+
+if not (CHUNKS_DIR / "chunks.csv").exists():
+    st.info("Start by placing PDFs into data/raw_pdfs and running the ingestion pipeline.")
+
+tab_live, tab_compare, tab_benchmark, tab_recommendations = st.tabs(
+    ["Live Query", "Compare Embeddings", "Benchmark Summary", "Cost & Recommendations"]
+)
+
+with tab_live:
+    render_single_query_tab()
+
+with tab_compare:
+    render_compare_tab()
+
+with tab_benchmark:
+    render_benchmark_tab()
+
+with tab_recommendations:
+    render_recommendations_tab()
