@@ -20,9 +20,14 @@ class RetrieverAgent:
         self.store = FaissStore(model_key)
 
     def build_index_from_chunks(self, chunks_df: pd.DataFrame) -> None:
-        embeddings = self.embedding_model.encode_passages(
-            chunks_df["chunk_text"].fillna("").tolist()
-        )
+        try:
+            embeddings = self.embedding_model.encode_passages(
+                chunks_df["chunk_text"].fillna("").tolist()
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to encode passages for embedding model '{self.model_key}'."
+            ) from exc
         self.store.build(embeddings, chunks_df)
         self.store.save()
 

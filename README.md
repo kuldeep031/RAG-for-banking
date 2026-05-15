@@ -9,7 +9,7 @@ Local semester project for:
 - How embedding model choice affects retrieval quality
 - How retrieval quality affects grounded answer quality
 - How embedding choice affects risk-decision quality
-- How retrieval quality, answer quality, and latency trade off in a banking RAG system
+- How retrieval quality, answer quality, latency, and local resource cost trade off in a banking RAG system
 
 ## Core stack
 
@@ -18,8 +18,8 @@ Local semester project for:
 - Sentence Transformers
 - Ollama
 - Streamlit
-- RAGAS
-- Gemini API for evaluation only
+- Optional RAGAS
+- Local LLM judge for offline evaluation
 
 ## Current project structure
 
@@ -29,6 +29,7 @@ Local semester project for:
 - `data/chunks/`: retrieval chunks with metadata
 - `indexes/`: one FAISS index per embedding model
 - `results/`: retrieval, answer, and RAGAS outputs
+- `results/local_judge/`: local Ollama-based answer quality scores
 - `src/`: backend code
 - `app/`: Streamlit UI
 
@@ -46,7 +47,14 @@ pip install -r requirements.txt
 Pull the local LLM:
 
 ```powershell
-ollama pull llama3.2:3b
+ollama pull llama3.2
+```
+
+Optional local embedding upgrades for the project:
+
+```powershell
+ollama pull nomic-embed-text
+ollama pull qwen3-embedding:0.6b
 ```
 
 ## First run order
@@ -63,8 +71,10 @@ ollama pull llama3.2:3b
 
 - Retrieval metrics: `Precision@3`, `Recall@3`, `Recall@5`, `MRR`, `nDCG@5`
 - Decision metrics: `label_accuracy`, `citation_hit_rate`, `avg_answer_similarity`
+- Local judge metrics: `local_groundedness`, `local_answer_relevance`, `local_decision_quality`
 - Latency metrics: average retrieval and total response time
-- RAGAS metrics: `context_precision`, `context_recall`, `faithfulness`, `answer_relevancy`
+- Local resource cost proxies: model parameters, approximate RAM footprint, index size on disk
+- Optional RAGAS metrics: `context_precision`, `context_recall`, `faithfulness`, `answer_relevancy`
 
 ## Run experiments
 
@@ -72,32 +82,32 @@ ollama pull llama3.2:3b
 .\.venv\Scripts\python.exe run_experiments.py
 ```
 
+By default this keeps the workflow local-only. It runs:
+
+- retrieval benchmarking
+- answer / decision benchmarking
+- local Ollama-based judge evaluation
+
+To run a custom set of embedding models:
+
+```powershell
+.\.venv\Scripts\python.exe run_experiments.py --models all_minilm_l6_v2,e5_small_v2,bge_small_en_v1_5,nomic_embed_text
+```
+
 This writes:
 
 - `results/retrieval/model_summary.csv`
 - `results/answers/model_summary.csv`
 - `results/ragas/ragas_input.csv`
+- `results/local_judge/local_judge_scores.csv`
 
-## Run RAGAS with Gemini
+## Optional RAGAS
 
-Set your API key first:
-
-```powershell
-$env:GOOGLE_API_KEY="your_key_here"
-```
-
-Then run:
+The project is designed to be complete without cloud APIs. RAGAS is optional.
+If you still want to run it locally against Ollama:
 
 ```powershell
-.\.venv\Scripts\python.exe -m src.evaluate_ragas --provider google --model gemini-2.5-flash --limit 1 --metrics context_precision
-```
-
-Use a very small limit first to control free-tier usage. Gemini free-tier quotas are tight, so
-running one metric at a time is the safest approach. Good examples:
-
-```powershell
-.\.venv\Scripts\python.exe -m src.evaluate_ragas --provider google --model gemini-2.5-flash --limit 1 --metrics context_precision
-.\.venv\Scripts\python.exe -m src.evaluate_ragas --provider google --model gemini-2.5-flash --limit 1 --metrics faithfulness
+.\.venv\Scripts\python.exe run_experiments.py --run-ragas --ragas-provider ollama
 ```
 
 ## Launch the demo
@@ -109,5 +119,5 @@ streamlit run app\streamlit_app.py
 
 ## Note
 
-The project is scaffolded to keep the experimental focus on embedding comparison.
-The implementation uses a simple single-RAG pipeline rather than a multi-agent design.
+The implementation is intentionally local-first and free to run after model downloads.
+The project keeps the experimental focus on embedding comparison rather than multi-agent orchestration.

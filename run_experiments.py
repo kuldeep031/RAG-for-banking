@@ -1,14 +1,63 @@
+import argparse
 import json
 
 import pandas as pd
 
-from src.config import EVAL_DIR, RESULTS_DIR, RetrievalConfig
+from src.config import (
+    DEFAULT_EXPERIMENT_EMBEDDING_KEYS,
+    EVAL_DIR,
+    INDEX_DIR,
+    MODEL_SPECS,
+    RESULTS_DIR,
+    RetrievalConfig,
+)
 from src.evaluate_answers import compute_answer_metrics
+from src.evaluate_local_judge import run_local_judge_evaluation
 from src.evaluate_retrieval import summarize_retrieval_metrics
 from src.rag_pipeline import SimpleBankingRiskRAG
 
 
-def run() -> str:
+def _resolve_embedding_keys(models_arg: str | None) -> list[str]:
+    if not models_arg:
+        return list(DEFAULT_EXPERIMENT_EMBEDDING_KEYS)
+    return [item.strip() for item in models_arg.split(",") if item.strip()]
+
+
+def _index_disk_mb(model_key: str) -> float:
+    store_dir = INDEX_DIR / model_key
+    total_bytes = 0
+    for filename in ["index.faiss", "metadata.csv"]:
+        path = store_dir / filename
+        if path.exists():
+            total_bytes += path.stat().st_size
+    return round(total_bytes / (1024 * 1024), 3)
+
+
+def _validate_required_indexes(model_keys: list[str]) -> None:
+    missing: list[str] = []
+    for model_key in model_keys:
+        index_path = INDEX_DIR / model_key / "index.faiss"
+        metadata_path = INDEX_DIR / model_key / "metadata.csv"
+        if not index_path.exists() or not metadata_path.exists():
+            missing.append(model_key)
+    if missing:
+        raise FileNotFoundError(
+            "Missing FAISS indexes for: "
+            + ", ".join(missing)
+            + ". Build them first with `python -m src.build_indexes --models ...`."
+        )
+
+
+def run(
+    model_keys: list[str] | None = None,
+    judge_model: str = "llama3.2",
+    run_local_judge: bool = True,
+    run_ragas: bool = False,
+    ragas_provider: str = "ollama",
+) -> str:
+    selected_model_keys = model_keys or list(DEFAULT_EXPERIMENT_EMBEDDING_KEYS)
+    _validate_required_indexes(selected_model_keys)
+
     questions_path = EVAL_DIR / "questions.csv"
     relevance_path = EVAL_DIR / "gold_relevance.csv"
 
@@ -22,13 +71,17 @@ def run() -> str:
 
     answer_rows: list[dict] = []
     retrieval_rows: list[dict] = []
+
     from src.embeddings import clear_cache
-    for embedding_key in ["all_minilm_l6_v2", "e5_small_v2", "bge_small_en_v1_5"]:
+
+    for embedding_key in selected_model_keys:
         pipeline = SimpleBankingRiskRAG(RetrievalConfig(embedding_key=embedding_key))
         for _, row in questions_df.iterrows():
             output = pipeline.run(str(row["question"]))
             retrieved_chunk_ids = [
-                str(chunk.get("chunk_id")) for chunk in output.retrieved_rows if chunk.get("chunk_id")
+                str(chunk.get("chunk_id"))
+                for chunk in output.retrieved_rows
+                if chunk.get("chunk_id")
             ]
             retrieved_contexts = [
                 str(chunk.get("chunk_text", "")) for chunk in output.retrieved_rows
@@ -61,17 +114,23 @@ def run() -> str:
                     "retrieval_seconds": output.timings.get("retrieval_seconds", 0.0),
                 }
             )
-        # Clear out the model footprint from RAM
+
         clear_cache()
 
     answer_output_path = RESULTS_DIR / "answers" / "experiment_outputs.csv"
     retrieval_output_path = RESULTS_DIR / "retrieval" / "per_question_retrieval.csv"
-    ragas_input_path = RESULTS_DIR / "ragas" / "ragas_input.csv"
     retrieval_summary_path = RESULTS_DIR / "retrieval" / "model_summary.csv"
     answer_summary_path = RESULTS_DIR / "answers" / "model_summary.csv"
+    ragas_input_path = RESULTS_DIR / "ragas" / "ragas_input.csv"
+    local_judge_output_path = RESULTS_DIR / "local_judge" / "local_judge_scores.csv"
 
     answers_df = pd.DataFrame(answer_rows)
     retrieval_df = pd.DataFrame(retrieval_rows)
+
+    answer_output_path.parent.mkdir(parents=True, exist_ok=True)
+    retrieval_output_path.parent.mkdir(parents=True, exist_ok=True)
+    ragas_input_path.parent.mkdir(parents=True, exist_ok=True)
+    local_judge_output_path.parent.mkdir(parents=True, exist_ok=True)
 
     answers_df.to_csv(answer_output_path, index=False)
     retrieval_df.to_csv(retrieval_output_path, index=False)
@@ -88,6 +147,15 @@ def run() -> str:
             on="embedding_model",
             how="left",
         )
+    retrieval_summary_df["params_millions"] = retrieval_summary_df["embedding_model"].map(
+        lambda key: MODEL_SPECS.get(key, {}).get("params_millions", 0.0)
+    )
+    retrieval_summary_df["memory_mb_approx"] = retrieval_summary_df["embedding_model"].map(
+        lambda key: MODEL_SPECS.get(key, {}).get("memory_mb_approx", 0.0)
+    )
+    retrieval_summary_df["index_disk_mb"] = retrieval_summary_df["embedding_model"].map(
+        _index_disk_mb
+    )
     retrieval_summary_df.to_csv(retrieval_summary_path, index=False)
 
     ragas_df = answers_df[
@@ -96,37 +164,104 @@ def run() -> str:
     ragas_df.to_csv(ragas_input_path, index=False)
 
     answer_summary_df = compute_answer_metrics(answers_df)
+    if run_local_judge:
+        print("Running local LLM judge evaluation...")
+        try:
+            local_judge_df = run_local_judge_evaluation(
+                answers_df,
+                evaluator_model=judge_model,
+            )
+            local_judge_df.to_csv(local_judge_output_path, index=False)
+            local_judge_summary_df = (
+                local_judge_df.groupby("embedding_model", as_index=False)
+                .agg(
+                    local_groundedness=("groundedness_score", "mean"),
+                    local_answer_relevance=("answer_relevance_score", "mean"),
+                    local_decision_quality=("decision_quality_score", "mean"),
+                )
+            )
+            answer_summary_df = answer_summary_df.merge(
+                local_judge_summary_df,
+                on="embedding_model",
+                how="left",
+            )
+            print("Local judge evaluation completed successfully.")
+        except Exception as exc:
+            print(f"Local judge evaluation failed: {exc}")
 
-    from src.evaluate_ragas import run_ragas_evaluation
+    if run_ragas:
+        from src.evaluate_ragas import run_ragas_evaluation
 
-    print("Running RAGAS Evaluation... This may take a while since it calls the LLM Judge.")
-    try:
-        # Ragas requires actual Python lists, not JSON strings
-        ragas_df["retrieved_contexts"] = ragas_df["retrieved_contexts"].apply(
-            lambda x: json.loads(x) if isinstance(x, str) else x
-        )
-        
-        ragas_scores_df = run_ragas_evaluation(
-            df=ragas_df, 
-            evaluator_model="grok-beta", 
-            provider="grok", 
-            metric_set="core"
-        )
-        
-        # Add the embedding model explicitly for aggregation
-        ragas_scores_df["embedding_model"] = ragas_df["embedding_model"].values
-        ragas_scores_df.to_csv(RESULTS_DIR / "ragas" / "ragas_scores.csv", index=False)
-        
-        ragas_agg_df = ragas_scores_df.groupby("embedding_model")[["context_precision", "faithfulness"]].mean().reset_index()
-        answer_summary_df = answer_summary_df.merge(ragas_agg_df, on="embedding_model", how="left")
-        
-        print("RAGAS Evaluation completed successfully.")
-    except Exception as e:
-        print(f"RAGAS evaluation failed (perhaps API key missing?): {e}")
+        print("Running RAGAS evaluation...")
+        try:
+            ragas_eval_df = ragas_df.copy()
+            ragas_eval_df["retrieved_contexts"] = ragas_eval_df["retrieved_contexts"].apply(
+                lambda value: json.loads(value) if isinstance(value, str) else value
+            )
+            ragas_scores_df = run_ragas_evaluation(
+                df=ragas_eval_df,
+                evaluator_model=judge_model,
+                provider=ragas_provider,
+                metric_set="core",
+            )
+            ragas_scores_df["embedding_model"] = ragas_eval_df["embedding_model"].values
+            ragas_scores_df.to_csv(RESULTS_DIR / "ragas" / "ragas_scores.csv", index=False)
+            ragas_agg_df = (
+                ragas_scores_df.groupby("embedding_model")[["context_precision", "faithfulness"]]
+                .mean()
+                .reset_index()
+            )
+            answer_summary_df = answer_summary_df.merge(
+                ragas_agg_df,
+                on="embedding_model",
+                how="left",
+            )
+            print("RAGAS evaluation completed successfully.")
+        except Exception as exc:
+            print(f"RAGAS evaluation failed: {exc}")
 
     answer_summary_df.to_csv(answer_summary_path, index=False)
     return str(answer_output_path)
 
 
 if __name__ == "__main__":
-    print(run())
+    parser = argparse.ArgumentParser(
+        description="Run local embedding experiments for the banking-risk RAG study."
+    )
+    parser.add_argument(
+        "--models",
+        default=",".join(DEFAULT_EXPERIMENT_EMBEDDING_KEYS),
+        help="Comma-separated embedding keys to evaluate.",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default="llama3.2",
+        help="Local Ollama model used for optional judging.",
+    )
+    parser.add_argument(
+        "--skip-local-judge",
+        action="store_true",
+        help="Skip the local LLM judge step.",
+    )
+    parser.add_argument(
+        "--run-ragas",
+        action="store_true",
+        help="Opt in to RAGAS evaluation. Keep this disabled for a fully local-only run.",
+    )
+    parser.add_argument(
+        "--ragas-provider",
+        choices=["ollama", "grok", "google"],
+        default="ollama",
+        help="Provider to use if --run-ragas is enabled.",
+    )
+    args = parser.parse_args()
+
+    print(
+        run(
+            model_keys=_resolve_embedding_keys(args.models),
+            judge_model=args.judge_model,
+            run_local_judge=not args.skip_local_judge,
+            run_ragas=args.run_ragas,
+            ragas_provider=args.ragas_provider,
+        )
+    )

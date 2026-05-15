@@ -4,22 +4,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-from src.config import RESULTS_DIR, MODEL_SPECS
+from src.config import RESULTS_DIR, MODEL_SPECS, friendly_embedding_name
 
 
 RETRIEVAL_SUMMARY_PATH = RESULTS_DIR / "retrieval" / "model_summary.csv"
 ANSWER_SUMMARY_PATH = RESULTS_DIR / "answers" / "model_summary.csv"
 PLOTS_DIR = RESULTS_DIR / "plots"
 
-MODEL_LABELS = {
-    "all_minilm_l6_v2": "MiniLM-L6-v2",
-    "e5_small_v2": "E5-Small-v2",
-    "bge_small_en_v1_5": "BGE-Small-en-v1.5",
-}
-
-
 def _friendly_labels(series: pd.Series) -> pd.Series:
-    return series.map(lambda value: MODEL_LABELS.get(value, value))
+    return series.map(friendly_embedding_name)
 
 
 def _save_plot(fig: plt.Figure, path: Path) -> None:
@@ -53,6 +46,9 @@ def generate_retrieval_plot(retrieval_df: pd.DataFrame) -> Path:
 
 def generate_answer_plot(answer_df: pd.DataFrame) -> Path:
     metrics_to_plot = ["label_accuracy", "citation_hit_rate", "avg_answer_similarity"]
+    for extra_metric in ["local_groundedness", "local_answer_relevance", "local_decision_quality"]:
+        if extra_metric in answer_df.columns:
+            metrics_to_plot.append(extra_metric)
     if "context_precision" in answer_df.columns and "faithfulness" in answer_df.columns:
         metrics_to_plot.extend(["context_precision", "faithfulness"])
 
@@ -104,25 +100,28 @@ def generate_latency_plot(retrieval_df: pd.DataFrame, answer_df: pd.DataFrame) -
 
 def generate_cost_accuracy_plot(retrieval_df: pd.DataFrame) -> Path:
     df = retrieval_df.copy()
-    df["params_millions"] = df["embedding_model"].apply(lambda x: MODEL_SPECS.get(x, {}).get("params_millions", 0))
+    if "memory_mb_approx" not in df.columns:
+        df["memory_mb_approx"] = df["embedding_model"].apply(
+            lambda x: MODEL_SPECS.get(x, {}).get("memory_mb_approx", 0)
+        )
     df["embedding_model"] = _friendly_labels(df["embedding_model"])
-    
+
     fig, ax = plt.subplots(figsize=(8, 5))
     sns.scatterplot(
-        data=df, 
-        x="params_millions", 
-        y="ndcg_at_5", 
-        hue="embedding_model", 
-        s=400, # Size of markers
+        data=df,
+        x="memory_mb_approx",
+        y="ndcg_at_5",
+        hue="embedding_model",
+        s=400,
         ax=ax
     )
-    for i, row in df.iterrows():
-        ax.text(row["params_millions"] + 0.3, row["ndcg_at_5"], row["embedding_model"], fontsize=9)
-    
-    ax.set_title("Cost Proxy (Model Params) vs Accuracy (nDCG@5)")
-    ax.set_xlabel("Model Parameters (Millions)")
+    for _, row in df.iterrows():
+        ax.text(row["memory_mb_approx"] + 5, row["ndcg_at_5"], row["embedding_model"], fontsize=9)
+
+    ax.set_title("Local Resource Cost (RAM Proxy) vs Accuracy")
+    ax.set_xlabel("Approximate Embedding RAM Footprint (MB)")
     ax.set_ylabel("Retrieval Accuracy (nDCG@5)")
-    ax.legend(title="Embedding Model", bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.legend(title="Embedding Model", bbox_to_anchor=(1.05, 1), loc="upper left")
 
     output_path = PLOTS_DIR / "cost_vs_accuracy.png"
     _save_plot(fig, output_path)

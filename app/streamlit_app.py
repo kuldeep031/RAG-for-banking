@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import CHUNKS_DIR, EMBEDDING_MODELS, MODEL_SPECS, RetrievalConfig
+from src.config import CHUNKS_DIR, EMBEDDING_MODELS, MODEL_SPECS, RetrievalConfig, friendly_embedding_name
 from src.rag_pipeline import SimpleBankingRiskRAG
 
 
@@ -19,7 +19,17 @@ QUESTION_OUTPUTS_PATH = RESULTS_DIR / "answers" / "experiment_outputs.csv"
 
 
 def friendly_model_name(model_key: str) -> str:
-    return EMBEDDING_MODELS.get(model_key, model_key)
+    return friendly_embedding_name(model_key)
+
+
+def get_indexed_embedding_keys() -> list[str]:
+    keys: list[str] = []
+    for model_key in EMBEDDING_MODELS:
+        index_path = PROJECT_ROOT / "indexes" / model_key / "index.faiss"
+        metadata_path = PROJECT_ROOT / "indexes" / model_key / "metadata.csv"
+        if index_path.exists() and metadata_path.exists():
+            keys.append(model_key)
+    return keys
 
 
 @st.cache_resource(show_spinner=False)
@@ -95,9 +105,14 @@ def render_pipeline_output(title: str, output) -> None:
 
 def render_single_query_tab() -> None:
     st.subheader("Live Query")
+    available_model_keys = get_indexed_embedding_keys()
+    if not available_model_keys:
+        st.warning("No built indexes found yet.")
+        return
+
     model_key = st.selectbox(
         "Embedding Model",
-        options=list(EMBEDDING_MODELS.keys()),
+        options=available_model_keys,
         format_func=friendly_model_name,
         key="single_model_key",
     )
@@ -125,6 +140,11 @@ def render_single_query_tab() -> None:
 
 def render_compare_tab() -> None:
     st.subheader("Compare All Embeddings")
+    available_model_keys = get_indexed_embedding_keys()
+    if not available_model_keys:
+        st.warning("No built indexes found yet.")
+        return
+
     compare_query = st.text_area(
         "Comparison Question",
         placeholder="What does SR 11-7 say model validation should verify?",
@@ -141,8 +161,8 @@ def render_compare_tab() -> None:
             comparison_rows: list[dict] = []
             outputs: dict[str, object] = {}
 
-            with st.spinner("Running all three embedding pipelines..."):
-                for model_key in EMBEDDING_MODELS:
+            with st.spinner("Running all available embedding pipelines..."):
+                for model_key in available_model_keys:
                     output = get_pipeline(model_key).run(compare_query.strip())
                     outputs[model_key] = output
                     comparison_rows.append(
@@ -161,7 +181,7 @@ def render_compare_tab() -> None:
 
             st.dataframe(pd.DataFrame(comparison_rows), use_container_width=True, hide_index=True)
 
-            for model_key in EMBEDDING_MODELS:
+            for model_key in available_model_keys:
                 with st.expander(friendly_model_name(model_key), expanded=False):
                     render_pipeline_output(friendly_model_name(model_key), outputs[model_key])
         except FileNotFoundError:
@@ -197,7 +217,20 @@ def render_benchmark_tab() -> None:
         st.caption("Answer / Decision Metrics")
         st.dataframe(answer_view, use_container_width=True, hide_index=True)
 
-        answer_chart_cols = [col for col in ["label_accuracy", "citation_hit_rate", "avg_answer_similarity", "context_precision", "faithfulness"] if col in answer_df.columns]
+        answer_chart_cols = [
+            col
+            for col in [
+                "label_accuracy",
+                "citation_hit_rate",
+                "avg_answer_similarity",
+                "local_groundedness",
+                "local_answer_relevance",
+                "local_decision_quality",
+                "context_precision",
+                "faithfulness",
+            ]
+            if col in answer_df.columns
+        ]
         answer_chart = answer_df.set_index("embedding_model")[answer_chart_cols]
         st.bar_chart(answer_chart)
 
@@ -227,8 +260,9 @@ def render_recommendations_tab() -> None:
     st.subheader("Cost-Performance Trade-offs & Recommendations")
     st.write(
         """
-        **Objective 3 & 4 Analysis**: This section evaluates the trade-offs between performance (accuracy), 
-        latency, and cost (using model parameters and memory footprint as a proxy for local embeddings). 
+        **Objective 3 & 4 Analysis**: This section evaluates the trade-offs between performance, latency,
+        and local resource cost. For this offline project, cost is represented through model parameters,
+        approximate RAM footprint, and index size on disk rather than API billing.
         Finally, it recommends the most suitable embedding models for specific banking risk use cases.
         """
     )
@@ -242,48 +276,67 @@ def render_recommendations_tab() -> None:
 
     # Merge dataset for unified analysis
     merged_df = pd.merge(retrieval_df, answer_df, on="embedding_model")
-    
-    # Inject Cost Proxy (Model Params)
-    merged_df["params_millions"] = merged_df["embedding_model"].apply(lambda x: MODEL_SPECS.get(x, {}).get("params_millions", 0))
-    merged_df["memory_mb"] = merged_df["embedding_model"].apply(lambda x: MODEL_SPECS.get(x, {}).get("memory_mb_approx", 0))
-    
-    st.markdown("### 1. Cost proxy vs Accuracy")
-    display_df = merged_df[["embedding_model", "params_millions", "memory_mb", "ndcg_at_5", "label_accuracy", "avg_total_seconds"]].copy()
+
+    if "params_millions" not in merged_df.columns:
+        merged_df["params_millions"] = merged_df["embedding_model"].apply(
+            lambda x: MODEL_SPECS.get(x, {}).get("params_millions", 0)
+        )
+    if "memory_mb_approx" not in merged_df.columns:
+        merged_df["memory_mb_approx"] = merged_df["embedding_model"].apply(
+            lambda x: MODEL_SPECS.get(x, {}).get("memory_mb_approx", 0)
+        )
+
+    st.markdown("### 1. Local resource cost vs Accuracy")
+    display_df = merged_df[
+        [
+            "embedding_model",
+            "params_millions",
+            "memory_mb_approx",
+            "index_disk_mb",
+            "ndcg_at_5",
+            "label_accuracy",
+            "avg_total_seconds",
+        ]
+    ].copy()
     display_df["embedding_model"] = display_df["embedding_model"].map(friendly_model_name)
     st.dataframe(display_df, use_container_width=True, hide_index=True)
-    
-    # Bubble/Scatter equivalent: Bar chart focusing on Accuracy vs Params
+
     col1, col2 = st.columns(2)
     with col1:
         st.caption("Accuracy (nDCG@5) Comparison")
         st.bar_chart(merged_df.set_index("embedding_model")["ndcg_at_5"])
     with col2:
-        st.caption("Cost Proxy (Model Parameters in Millions)")
-        st.bar_chart(merged_df.set_index("embedding_model")["params_millions"])
+        st.caption("Approximate RAM Footprint (MB)")
+        st.bar_chart(merged_df.set_index("embedding_model")["memory_mb_approx"])
 
     # Finding optimal models
-    best_accuracy_model = merged_df.loc[merged_df['ndcg_at_5'].idxmax()]
-    lowest_cost_model = merged_df.loc[merged_df['params_millions'].idxmin()]
-    fastest_model = merged_df.loc[merged_df['avg_total_seconds'].idxmin()]
-    
-    st.markdown("### 2. Recommendations for Banking Risk Use Cases")
-    
-    st.success(f"**Accuracy-Critical Use Case (e.g. Regulatory Audits, High-Risk Scoring):**\n\n"
-               f"**Recommended Model:** {friendly_model_name(best_accuracy_model['embedding_model'])}\n\n"
-               f"**Reason:** Achieved the highest retrieval accuracy (nDCG@5: *{best_accuracy_model['ndcg_at_5']:.3f}*) and "
-               f"answer label accuracy (*{best_accuracy_model['label_accuracy']:.2f}*). In banking compliance, missing a crucial policy "
-               f"can lead to severe penalties, making this the best choice despite higher parameter size (*{best_accuracy_model['params_millions']}M params*).")
-               
-    st.info(f"**Cost/Resource-Constrained Use Case (e.g. High-volume live chatbots, Edge devices):**\n\n"
-            f"**Recommended Model:** {friendly_model_name(lowest_cost_model['embedding_model'])}\n\n"
-            f"**Reason:** Most resource-efficient with only *{lowest_cost_model['params_millions']}M parameters* "
-            f"(takes ~{lowest_cost_model['memory_mb']}MB RAM). Suitable when hardware is limited but still maintains a respectable "
-            f"retrieval baseline.")
+    best_accuracy_model = merged_df.loc[merged_df["ndcg_at_5"].idxmax()]
+    lowest_cost_model = merged_df.loc[merged_df["memory_mb_approx"].idxmin()]
+    fastest_model = merged_df.loc[merged_df["avg_total_seconds"].idxmin()]
 
-    st.warning(f"**Latency-Sensitive Use Case (e.g. Real-time Customer Support):**\n\n"
-               f"**Recommended Model:** {friendly_model_name(fastest_model['embedding_model'])}\n\n"
-               f"**Reason:** Yields the fastest end-to-end response time (*{fastest_model['avg_total_seconds']:.2f} seconds*). "
-               f"Crucial for interactive RAG applications where users expect immediate risk assessments.")
+    st.markdown("### 2. Recommendations for Banking Risk Use Cases")
+
+    st.success(
+        f"**Accuracy-Critical Use Case (e.g. Regulatory Audits, High-Risk Scoring):**\n\n"
+        f"**Recommended Model:** {friendly_model_name(best_accuracy_model['embedding_model'])}\n\n"
+        f"**Reason:** Achieved the highest retrieval accuracy (nDCG@5: *{best_accuracy_model['ndcg_at_5']:.3f}*) "
+        f"and label accuracy (*{best_accuracy_model['label_accuracy']:.2f}*). For compliance-heavy banking workflows, "
+        f"this is the safest choice when retrieval completeness matters more than resource footprint."
+    )
+
+    st.info(
+        f"**Resource-Constrained Local Deployment:**\n\n"
+        f"**Recommended Model:** {friendly_model_name(lowest_cost_model['embedding_model'])}\n\n"
+        f"**Reason:** Lowest approximate embedding RAM footprint at about *{lowest_cost_model['memory_mb_approx']}MB*, "
+        f"while still preserving a usable retrieval baseline for offline deployments on modest hardware."
+    )
+
+    st.warning(
+        f"**Latency-Sensitive Use Case (e.g. Real-time Customer Support):**\n\n"
+        f"**Recommended Model:** {friendly_model_name(fastest_model['embedding_model'])}\n\n"
+        f"**Reason:** Fastest end-to-end response time at *{fastest_model['avg_total_seconds']:.2f} seconds*, "
+        f"which makes it attractive for interactive RAG scenarios."
+    )
 
 st.set_page_config(page_title="Banking Risk RAG", layout="wide")
 st.title("Banking Risk RAG Demo")
