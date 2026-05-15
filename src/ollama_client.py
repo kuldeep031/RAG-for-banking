@@ -16,6 +16,14 @@ class OllamaResponse:
     raw: dict
 
 
+class OllamaUnavailableError(RuntimeError):
+    pass
+
+
+class OllamaEmbeddingError(RuntimeError):
+    pass
+
+
 class OllamaClient:
     def __init__(self, model: str) -> None:
         self.model = model
@@ -29,16 +37,21 @@ class OllamaClient:
         request_options = {"temperature": temperature}
         if options:
             request_options.update(options)
-        response = requests.post(
-            GENERATE_URL,
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": request_options,
-            },
-            timeout=300,
-        )
+        try:
+            response = requests.post(
+                GENERATE_URL,
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": request_options,
+                },
+                timeout=300,
+            )
+        except requests.ConnectionError as exc:
+            raise OllamaUnavailableError(
+                "Ollama is not running or is not reachable at http://localhost:11434."
+            ) from exc
         response.raise_for_status()
         payload = response.json()
         return OllamaResponse(text=payload.get("response", "").strip(), raw=payload)
@@ -68,14 +81,19 @@ class OllamaClient:
     def _embed_single_with_backoff(self, prompt: str) -> np.ndarray:
         candidate = prompt
         for _ in range(8):
-            response = requests.post(
-                EMBED_URL,
-                json={
-                    "model": self.model,
-                    "input": [candidate],
-                },
-                timeout=180,
-            )
+            try:
+                response = requests.post(
+                    EMBED_URL,
+                    json={
+                        "model": self.model,
+                        "input": [candidate],
+                    },
+                    timeout=180,
+                )
+            except requests.ConnectionError as exc:
+                raise OllamaUnavailableError(
+                    "Ollama is not running or is not reachable at http://localhost:11434."
+                ) from exc
             if response.ok:
                 payload = response.json()
                 embeddings = payload.get("embeddings")
@@ -109,14 +127,19 @@ class OllamaClient:
 
         for start in range(0, len(prompts), batch_size):
             batch = prompts[start : start + batch_size]
-            response = requests.post(
-                EMBED_URL,
-                json={
-                    "model": self.model,
-                    "input": batch,
-                },
-                timeout=300,
-            )
+            try:
+                response = requests.post(
+                    EMBED_URL,
+                    json={
+                        "model": self.model,
+                        "input": batch,
+                    },
+                    timeout=300,
+                )
+            except requests.ConnectionError as exc:
+                raise OllamaUnavailableError(
+                    "Ollama is not running or is not reachable at http://localhost:11434."
+                ) from exc
 
             if response.ok:
                 payload = response.json()
@@ -142,16 +165,25 @@ class OllamaClient:
                     f"with status {response.status_code}: {response.text}"
                 )
 
+            legacy_supported = True
             legacy_vectors: list[np.ndarray] = []
             for prompt in batch:
-                legacy_response = requests.post(
-                    LEGACY_EMBEDDINGS_URL,
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                    },
-                    timeout=120,
-                )
+                try:
+                    legacy_response = requests.post(
+                        LEGACY_EMBEDDINGS_URL,
+                        json={
+                            "model": self.model,
+                            "prompt": prompt,
+                        },
+                        timeout=120,
+                    )
+                except requests.ConnectionError as exc:
+                    raise OllamaUnavailableError(
+                        "Ollama is not running or is not reachable at http://localhost:11434."
+                    ) from exc
+                if legacy_response.status_code == 404:
+                    legacy_supported = False
+                    break
                 legacy_response.raise_for_status()
                 payload = legacy_response.json()
                 vector = payload.get("embedding")
@@ -160,6 +192,12 @@ class OllamaClient:
                         f"Ollama legacy embeddings call returned no vector for model {self.model}."
                     )
                 legacy_vectors.append(np.asarray(vector, dtype="float32"))
+            if not legacy_supported:
+                raise OllamaEmbeddingError(
+                    "Ollama embedding request failed. `/api/embed` returned 404 and the legacy "
+                    "`/api/embeddings` endpoint is also unavailable. Restart Ollama and verify "
+                    f"the embedding model `{self.model}` is installed with `ollama show {self.model}`."
+                )
             batched_vectors.append(np.vstack(legacy_vectors))
 
         return np.vstack(batched_vectors)

@@ -46,9 +46,6 @@ def generate_retrieval_plot(retrieval_df: pd.DataFrame) -> Path:
 
 def generate_answer_plot(answer_df: pd.DataFrame) -> Path:
     metrics_to_plot = ["label_accuracy", "citation_hit_rate", "avg_answer_similarity"]
-    for extra_metric in ["local_groundedness", "local_answer_relevance", "local_decision_quality"]:
-        if extra_metric in answer_df.columns:
-            metrics_to_plot.append(extra_metric)
     if "context_precision" in answer_df.columns and "faithfulness" in answer_df.columns:
         metrics_to_plot.extend(["context_precision", "faithfulness"])
 

@@ -52,37 +52,12 @@ EMBEDDING_MODELS = {
         "dim": 384,
         "memory_mb_approx": 130,
     },
-    "nomic_embed_text": {
-        "backend": "ollama",
-        "model_name": "nomic-embed-text",
-        "display_name": "Nomic Embed Text",
-        "query_prefix": "search_query: ",
-        "passage_prefix": "search_document: ",
-        "params_millions": 137.0,
-        "dim": 768,
-        "memory_mb_approx": 600,
-    },
-    "qwen3_embedding_0_6b": {
-        "backend": "ollama",
-        "model_name": "qwen3-embedding:0.6b",
-        "display_name": "Qwen3 Embedding 0.6B",
-        "query_prefix": "Instruct: Represent this query for retrieval.\nQuery: ",
-        "passage_prefix": "Instruct: Represent this document for retrieval.\nDocument: ",
-        "params_millions": 600.0,
-        "dim": 1024,
-        "memory_mb_approx": 900,
-    },
 }
 
 DEFAULT_EXPERIMENT_EMBEDDING_KEYS = [
     "all_minilm_l6_v2",
     "e5_small_v2",
     "bge_small_en_v1_5",
-]
-
-RECOMMENDED_LOCAL_EMBEDDING_KEYS = [
-    "nomic_embed_text",
-    "qwen3_embedding_0_6b",
 ]
 
 MODEL_SPECS = {
@@ -128,7 +103,6 @@ def ensure_directories() -> None:
         RESULTS_DIR / "retrieval",
         RESULTS_DIR / "answers",
         RESULTS_DIR / "ragas",
-        RESULTS_DIR / "local_judge",
         RESULTS_DIR / "plots",
         APP_DIR,
     ]

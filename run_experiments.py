@@ -12,7 +12,6 @@ from src.config import (
     RetrievalConfig,
 )
 from src.evaluate_answers import compute_answer_metrics
-from src.evaluate_local_judge import run_local_judge_evaluation
 from src.evaluate_retrieval import summarize_retrieval_metrics
 from src.rag_pipeline import SimpleBankingRiskRAG
 
@@ -50,10 +49,9 @@ def _validate_required_indexes(model_keys: list[str]) -> None:
 
 def run(
     model_keys: list[str] | None = None,
-    judge_model: str = "llama3.2",
-    run_local_judge: bool = True,
     run_ragas: bool = False,
     ragas_provider: str = "ollama",
+    ragas_model: str = "llama3.2",
 ) -> str:
     selected_model_keys = model_keys or list(DEFAULT_EXPERIMENT_EMBEDDING_KEYS)
     _validate_required_indexes(selected_model_keys)
@@ -122,7 +120,6 @@ def run(
     retrieval_summary_path = RESULTS_DIR / "retrieval" / "model_summary.csv"
     answer_summary_path = RESULTS_DIR / "answers" / "model_summary.csv"
     ragas_input_path = RESULTS_DIR / "ragas" / "ragas_input.csv"
-    local_judge_output_path = RESULTS_DIR / "local_judge" / "local_judge_scores.csv"
 
     answers_df = pd.DataFrame(answer_rows)
     retrieval_df = pd.DataFrame(retrieval_rows)
@@ -130,7 +127,6 @@ def run(
     answer_output_path.parent.mkdir(parents=True, exist_ok=True)
     retrieval_output_path.parent.mkdir(parents=True, exist_ok=True)
     ragas_input_path.parent.mkdir(parents=True, exist_ok=True)
-    local_judge_output_path.parent.mkdir(parents=True, exist_ok=True)
 
     answers_df.to_csv(answer_output_path, index=False)
     retrieval_df.to_csv(retrieval_output_path, index=False)
@@ -164,30 +160,6 @@ def run(
     ragas_df.to_csv(ragas_input_path, index=False)
 
     answer_summary_df = compute_answer_metrics(answers_df)
-    if run_local_judge:
-        print("Running local LLM judge evaluation...")
-        try:
-            local_judge_df = run_local_judge_evaluation(
-                answers_df,
-                evaluator_model=judge_model,
-            )
-            local_judge_df.to_csv(local_judge_output_path, index=False)
-            local_judge_summary_df = (
-                local_judge_df.groupby("embedding_model", as_index=False)
-                .agg(
-                    local_groundedness=("groundedness_score", "mean"),
-                    local_answer_relevance=("answer_relevance_score", "mean"),
-                    local_decision_quality=("decision_quality_score", "mean"),
-                )
-            )
-            answer_summary_df = answer_summary_df.merge(
-                local_judge_summary_df,
-                on="embedding_model",
-                how="left",
-            )
-            print("Local judge evaluation completed successfully.")
-        except Exception as exc:
-            print(f"Local judge evaluation failed: {exc}")
 
     if run_ragas:
         from src.evaluate_ragas import run_ragas_evaluation
@@ -200,7 +172,7 @@ def run(
             )
             ragas_scores_df = run_ragas_evaluation(
                 df=ragas_eval_df,
-                evaluator_model=judge_model,
+                evaluator_model=ragas_model,
                 provider=ragas_provider,
                 metric_set="core",
             )
@@ -234,16 +206,6 @@ if __name__ == "__main__":
         help="Comma-separated embedding keys to evaluate.",
     )
     parser.add_argument(
-        "--judge-model",
-        default="llama3.2",
-        help="Local Ollama model used for optional judging.",
-    )
-    parser.add_argument(
-        "--skip-local-judge",
-        action="store_true",
-        help="Skip the local LLM judge step.",
-    )
-    parser.add_argument(
         "--run-ragas",
         action="store_true",
         help="Opt in to RAGAS evaluation. Keep this disabled for a fully local-only run.",
@@ -254,14 +216,18 @@ if __name__ == "__main__":
         default="ollama",
         help="Provider to use if --run-ragas is enabled.",
     )
+    parser.add_argument(
+        "--ragas-model",
+        default="llama3.2",
+        help="Model to use if --run-ragas is enabled.",
+    )
     args = parser.parse_args()
 
     print(
         run(
             model_keys=_resolve_embedding_keys(args.models),
-            judge_model=args.judge_model,
-            run_local_judge=not args.skip_local_judge,
             run_ragas=args.run_ragas,
             ragas_provider=args.ragas_provider,
+            ragas_model=args.ragas_model,
         )
     )

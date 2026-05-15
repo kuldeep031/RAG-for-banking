@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import CHUNKS_DIR, EMBEDDING_MODELS, MODEL_SPECS, RetrievalConfig, friendly_embedding_name
+from src.ollama_client import OllamaEmbeddingError, OllamaUnavailableError
 from src.rag_pipeline import SimpleBankingRiskRAG
 
 
@@ -46,6 +47,22 @@ def load_csv(path: Path) -> pd.DataFrame:
 
 def format_metric(value: float, digits: int = 3) -> str:
     return f"{value:.{digits}f}"
+
+
+def render_ollama_unavailable(error: Exception | None = None) -> None:
+    st.error(
+        "Ollama is not running, so live generation is unavailable. Start the local server and retry."
+    )
+    st.code("ollama serve", language="powershell")
+    if error is not None:
+        st.caption(str(error))
+
+
+def render_embedding_backend_error(model_key: str, error: Exception) -> None:
+    st.warning(
+        f"{friendly_model_name(model_key)} could not run its live embedding/query path."
+    )
+    st.caption(str(error))
 
 
 def build_evidence_table(rows: list[dict]) -> pd.DataFrame:
@@ -134,6 +151,10 @@ def render_single_query_tab() -> None:
             render_pipeline_output(friendly_model_name(model_key), output)
         except FileNotFoundError:
             st.error("Indexes are not built yet. Build them before opening the demo.")
+        except OllamaUnavailableError as exc:
+            render_ollama_unavailable(exc)
+        except OllamaEmbeddingError as exc:
+            render_embedding_backend_error(model_key, exc)
         except Exception as exc:
             st.exception(exc)
 
@@ -160,32 +181,54 @@ def render_compare_tab() -> None:
         try:
             comparison_rows: list[dict] = []
             outputs: dict[str, object] = {}
+            failed_models: list[tuple[str, str]] = []
 
             with st.spinner("Running all available embedding pipelines..."):
                 for model_key in available_model_keys:
-                    output = get_pipeline(model_key).run(compare_query.strip())
-                    outputs[model_key] = output
-                    comparison_rows.append(
-                        {
-                            "embedding_model": friendly_model_name(model_key),
-                            "risk_label": output.decision.get("risk_label", "Unknown"),
-                            "evidence_status": output.decision.get("evidence_status", "unknown"),
-                            "top_chunk": output.retrieved_rows[0]["chunk_id"] if output.retrieved_rows else "",
-                            "top_source": output.retrieved_rows[0]["source_file"] if output.retrieved_rows else "",
-                            "top_score": round(float(output.retrieved_rows[0]["score"]), 4)
-                            if output.retrieved_rows
-                            else 0.0,
-                            "total_seconds": round(float(output.timings.get("total_seconds", 0.0)), 2),
-                        }
-                    )
+                    try:
+                        output = get_pipeline(model_key).run(compare_query.strip())
+                        outputs[model_key] = output
+                        comparison_rows.append(
+                            {
+                                "embedding_model": friendly_model_name(model_key),
+                                "risk_label": output.decision.get("risk_label", "Unknown"),
+                                "evidence_status": output.decision.get("evidence_status", "unknown"),
+                                "top_chunk": output.retrieved_rows[0]["chunk_id"] if output.retrieved_rows else "",
+                                "top_source": output.retrieved_rows[0]["source_file"] if output.retrieved_rows else "",
+                                "top_score": round(float(output.retrieved_rows[0]["score"]), 4)
+                                if output.retrieved_rows
+                                else 0.0,
+                                "total_seconds": round(float(output.timings.get("total_seconds", 0.0)), 2),
+                            }
+                        )
+                    except (OllamaUnavailableError, OllamaEmbeddingError) as exc:
+                        failed_models.append((model_key, str(exc)))
+                        comparison_rows.append(
+                            {
+                                "embedding_model": friendly_model_name(model_key),
+                                "risk_label": "Unavailable",
+                                "evidence_status": "error",
+                                "top_chunk": "",
+                                "top_source": "",
+                                "top_score": 0.0,
+                                "total_seconds": 0.0,
+                            }
+                        )
 
             st.dataframe(pd.DataFrame(comparison_rows), use_container_width=True, hide_index=True)
 
             for model_key in available_model_keys:
+                if model_key not in outputs:
+                    continue
                 with st.expander(friendly_model_name(model_key), expanded=False):
                     render_pipeline_output(friendly_model_name(model_key), outputs[model_key])
+            for model_key, message in failed_models:
+                with st.expander(friendly_model_name(model_key), expanded=False):
+                    st.warning(message)
         except FileNotFoundError:
             st.error("Indexes are not built yet. Build them before opening the demo.")
+        except OllamaUnavailableError as exc:
+            render_ollama_unavailable(exc)
         except Exception as exc:
             st.exception(exc)
 
@@ -223,9 +266,6 @@ def render_benchmark_tab() -> None:
                 "label_accuracy",
                 "citation_hit_rate",
                 "avg_answer_similarity",
-                "local_groundedness",
-                "local_answer_relevance",
-                "local_decision_quality",
                 "context_precision",
                 "faithfulness",
             ]
