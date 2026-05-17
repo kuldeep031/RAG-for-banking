@@ -6,116 +6,147 @@ from src.config import EVAL_DIR, ensure_directories
 STARTER_QUESTIONS = [
     {
         "question_id": "Q001",
-        "question": "A bank uses models without independent validation. Based on SR 11-7, what model risk level does this indicate?",
-        "question_type": "model_risk",
-        "reference_answer": "SR 11-7 treats lack of independent validation as a serious model risk weakness because validation should verify that models perform as expected and remain fit for purpose. The situation indicates high model risk.",
+        "question": "If a bank does not clearly assign responsibilities to its operational risk management function, what operational risk level is indicated under RBI's 2024 operational risk guidance?",
+        "question_type": "operational_risk",
+        "reference_answer": "RBI's 2024 guidance expects clear responsibilities for the operational risk management function. If responsibilities are not clearly assigned, the control environment is weak and the situation indicates high operational risk.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q002",
-        "question": "If senior management does not oversee model use and governance reporting, what model risk level is indicated under SR 11-7?",
-        "question_type": "model_risk",
-        "reference_answer": "SR 11-7 expects strong governance, board oversight, and regular reporting on significant model risk. Weak senior management oversight indicates high model risk.",
+        "question": "If a bank cannot continue critical operations during a major disruption, what operational risk level is indicated under RBI's operational resilience guidance?",
+        "question_type": "operational_resilience",
+        "reference_answer": "RBI defines operational resilience as the ability to deliver critical operations through disruption. If a bank cannot continue critical operations during disruption, the situation indicates high operational risk and weak operational resilience.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q003",
-        "question": "If a bank has weak change management and unclear three lines of defence, what operational risk level is indicated?",
+        "question": "If senior management does not receive regular reporting on material operational risk exposures and losses, what operational risk level is indicated?",
         "question_type": "operational_risk",
-        "reference_answer": "Basel operational risk guidance treats weak change management and poorly defined three lines of defence as significant control weaknesses. The situation indicates high operational risk.",
+        "reference_answer": "RBI expects regular reporting of material operational risk exposures and losses to management and the board. Failure to ensure such reporting indicates weak governance and high operational risk.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q004",
-        "question": "If a bank cannot maintain critical operations during disruption, what operational risk level is indicated under Basel operational resilience principles?",
-        "question_type": "operational_resilience",
-        "reference_answer": "The operational resilience principles focus on sustaining critical operations during disruption. Inability to maintain critical operations indicates high operational risk and weak resilience.",
+        "question": "If a bank does not maintain clear written credit policies defining target markets, approval authority, and portfolio management, what credit risk level is indicated under RBI credit risk guidance?",
+        "question_type": "credit_risk",
+        "reference_answer": "RBI's credit risk guidance requires clear written credit policies that define target markets, risk acceptance criteria, approval authority, and portfolio management. Absence of these controls indicates high credit risk.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q005",
-        "question": "If the board does not review credit risk strategy and policies, what credit risk level is indicated?",
+        "question": "If a bank has no independent credit risk management function and loan decisions are made without effective checks and balances, what credit risk level is indicated?",
         "question_type": "credit_risk",
-        "reference_answer": "Basel credit risk principles assign the board responsibility for approving and periodically reviewing credit risk strategy and policies. Failure to do so indicates high credit risk governance weakness.",
+        "reference_answer": "RBI guidance emphasizes an independent credit risk management function and checks and balances around credit approval. If these are absent, the situation indicates high credit risk.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q006",
-        "question": "If credit approval authority and accountability are unclear, what credit risk level is indicated?",
+        "question": "If a bank does not monitor concentration risk by borrower, industry, or geography, what credit risk level is indicated?",
         "question_type": "credit_risk",
-        "reference_answer": "The credit-granting process should define approval authority, accountability, and responsible decision making. Unclear authority and accountability indicate high credit risk.",
+        "reference_answer": "RBI expects banks to monitor risk concentrations by obligor, industry, and geography as part of credit risk management. Failure to do so indicates high credit risk.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q007",
-        "question": "If loan files are outdated and credit monitoring is weak, what credit risk level is indicated?",
-        "question_type": "credit_risk",
-        "reference_answer": "Credit administration requires current borrower information, updated documentation, and effective monitoring. Outdated files and weak monitoring indicate medium to high credit risk; for this benchmark it should be treated as High.",
+        "question": "If a bank lacks a Board-approved stress testing framework and does not document stress assumptions, what risk governance level is indicated?",
+        "question_type": "stress_testing",
+        "reference_answer": "RBI requires banks to maintain a Board-approved stress testing framework with documented assumptions, methodologies, reporting lines, and remedial actions. Absence of these controls indicates high risk governance weakness.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q008",
-        "question": "If internal controls do not ensure compliance with operational risk policies, what operational risk level is indicated?",
-        "question_type": "operational_risk",
-        "reference_answer": "Operational risk guidance expects internal controls to ensure compliance with policies and procedures. Failure of those controls indicates high operational risk.",
+        "question": "If stress test results are not reviewed by senior management or reported to the Board, what risk oversight level is indicated?",
+        "question_type": "stress_testing",
+        "reference_answer": "RBI stress testing guidance requires senior management review and Board reporting of stress test results. Failure to do so indicates weak oversight and high risk management concern.",
         "expected_risk_label": "High",
     },
     {
         "question_id": "Q009",
-        "question": "What does SR 11-7 say model validation should verify?",
+        "question": "If credit models are deployed without proper governance, validation, and oversight, what model risk level is indicated under RBI's draft model-risk principles?",
         "question_type": "model_risk",
-        "reference_answer": "SR 11-7 states that model validation should verify that models are performing as expected, consistent with their design objectives and intended business uses.",
-        "expected_risk_label": "Unknown",
+        "reference_answer": "RBI's draft principles for management of model risks in credit emphasize governance, oversight, model development discipline, and model validation. Deployment without these safeguards indicates high model risk.",
+        "expected_risk_label": "High",
     },
     {
         "question_id": "Q010",
-        "question": "What are the three lines of defence in operational risk management?",
-        "question_type": "operational_risk",
-        "reference_answer": "The three lines of defence separate responsibility among business line management as the first line, independent corporate operational risk management as the second line, and independent review such as internal audit as the third line.",
-        "expected_risk_label": "Unknown",
+        "question": "If a private sector bank has weak board oversight and poor governance over risk-taking, what governance-related risk level is indicated?",
+        "question_type": "governance",
+        "reference_answer": "RBI's governance framework for private sector banks expects sound board oversight, diversified ownership, and responsible governance over risk-taking. Weak board oversight indicates high governance-related risk.",
+        "expected_risk_label": "High",
     },
     {
         "question_id": "Q011",
-        "question": "What is the purpose of operational resilience principles?",
+        "question": "What is the purpose of RBI's Guidance Note on Operational Risk Management and Operational Resilience?",
         "question_type": "operational_resilience",
-        "reference_answer": "The principles aim to strengthen a bank's ability to deliver critical operations through disruption and improve resilience to operational risk events.",
+        "reference_answer": "The purpose of RBI's Guidance Note is to improve the effectiveness of operational risk management and enhance operational resilience so that regulated entities can withstand, adapt to, recover from, and learn from disruptions while continuing critical operations.",
         "expected_risk_label": "Unknown",
     },
     {
         "question_id": "Q012",
-        "question": "Why are bank examinations important according to FDIC guidance?",
-        "question_type": "supervisory_guidance",
-        "reference_answer": "FDIC examination guidance explains that examinations support supervisory oversight by identifying weaknesses, assessing risk, and prompting corrective action before problems become more serious.",
+        "question": "What are the key building blocks of an effective credit risk management framework according to RBI guidance?",
+        "question_type": "credit_risk",
+        "reference_answer": "RBI's credit risk guidance describes the key building blocks as strategy and policy, organisation, and operations or systems, supported by risk appetite, approval discipline, monitoring, MIS, and independent credit risk management.",
         "expected_risk_label": "Unknown",
     },
 ]
 
 
-STARTER_GOLD_RELEVANCE = [
-    {"question_id": "Q001", "relevant_chunk_id": "sr1107a1_p2_c1"},
-    {"question_id": "Q001", "relevant_chunk_id": "sr1107a1_p9_c1"},
-    {"question_id": "Q002", "relevant_chunk_id": "sr1107a1_p16_c2"},
-    {"question_id": "Q002", "relevant_chunk_id": "sr1107a1_p17_c1"},
-    {"question_id": "Q003", "relevant_chunk_id": "bcbs292_p37_c1"},
-    {"question_id": "Q003", "relevant_chunk_id": "bcbs292_p8_c1"},
-    {"question_id": "Q004", "relevant_chunk_id": "d516_p7_c1"},
-    {"question_id": "Q004", "relevant_chunk_id": "d516_p8_c1"},
-    {"question_id": "Q005", "relevant_chunk_id": "d595_p6_c1"},
-    {"question_id": "Q005", "relevant_chunk_id": "d595_p7_c1"},
-    {"question_id": "Q006", "relevant_chunk_id": "d595_p12_c2"},
-    {"question_id": "Q006", "relevant_chunk_id": "d595_p12_c1"},
-    {"question_id": "Q007", "relevant_chunk_id": "d595_p14_c2"},
-    {"question_id": "Q007", "relevant_chunk_id": "d595_p13_c2"},
-    {"question_id": "Q008", "relevant_chunk_id": "bcbs292_p47_c1"},
-    {"question_id": "Q008", "relevant_chunk_id": "bcbs292_p57_c1"},
-    {"question_id": "Q009", "relevant_chunk_id": "sr1107a1_p9_c1"},
-    {"question_id": "Q009", "relevant_chunk_id": "sr1107a1_p10_c2"},
-    {"question_id": "Q010", "relevant_chunk_id": "bcbs292_p56_c2"},
-    {"question_id": "Q010", "relevant_chunk_id": "bcbs292_p37_c1"},
-    {"question_id": "Q011", "relevant_chunk_id": "d516_p7_c1"},
-    {"question_id": "Q011", "relevant_chunk_id": "d516_p7_c2"},
-    {"question_id": "Q012", "relevant_chunk_id": "section1_1_p2_c1"},
-    {"question_id": "Q012", "relevant_chunk_id": "section1_1_p16_c2"},
+# Gold relevance must be rebuilt after extraction, chunking, and index regeneration
+# because the new India-specific PDF corpus creates new chunk identifiers.
+STARTER_GOLD_RELEVANCE: list[dict[str, str]] = []
+
+
+UI_DEMO_QUESTIONS = [
+    {
+        "demo_id": "D001",
+        "category": "operational_risk",
+        "question": "What does RBI expect from a bank's operational risk management function?",
+    },
+    {
+        "demo_id": "D002",
+        "category": "operational_resilience",
+        "question": "What does RBI mean by operational resilience for banks?",
+    },
+    {
+        "demo_id": "D003",
+        "category": "operational_resilience",
+        "question": "Why is continuing critical operations during disruption important under RBI guidance?",
+    },
+    {
+        "demo_id": "D004",
+        "category": "credit_risk",
+        "question": "What should a bank's credit risk policy include according to RBI?",
+    },
+    {
+        "demo_id": "D005",
+        "category": "credit_risk",
+        "question": "Why does RBI emphasize an independent credit risk management function?",
+    },
+    {
+        "demo_id": "D006",
+        "category": "stress_testing",
+        "question": "What should a Board-approved stress testing framework contain according to RBI?",
+    },
+    {
+        "demo_id": "D007",
+        "category": "stress_testing",
+        "question": "How does stress testing support risk management in Indian banks?",
+    },
+    {
+        "demo_id": "D008",
+        "category": "model_risk",
+        "question": "Why is model validation important in RBI's draft principles for management of model risks in credit?",
+    },
+    {
+        "demo_id": "D009",
+        "category": "governance",
+        "question": "What does RBI expect from the board of a private sector bank in terms of governance?",
+    },
+    {
+        "demo_id": "D010",
+        "category": "comparison",
+        "question": "Compare how RBI guidance addresses credit risk, operational risk, and model risk.",
+    },
 ]
 
 
@@ -141,8 +172,9 @@ def create_starter_testset_files() -> None:
     ensure_directories()
     pd.DataFrame(STARTER_QUESTIONS).to_csv(EVAL_DIR / "questions.csv", index=False)
     pd.DataFrame(STARTER_GOLD_RELEVANCE).to_csv(EVAL_DIR / "gold_relevance.csv", index=False)
+    pd.DataFrame(UI_DEMO_QUESTIONS).to_csv(EVAL_DIR / "ui_demo_questions.csv", index=False)
 
 
 if __name__ == "__main__":
     create_starter_testset_files()
-    print("Created starter evaluation dataset.")
+    print("Created India-specific starter evaluation dataset and UI demo questions.")

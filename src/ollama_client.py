@@ -8,6 +8,7 @@ OLLAMA_BASE_URL = "http://localhost:11434/api"
 GENERATE_URL = f"{OLLAMA_BASE_URL}/generate"
 EMBED_URL = f"{OLLAMA_BASE_URL}/embed"
 LEGACY_EMBEDDINGS_URL = f"{OLLAMA_BASE_URL}/embeddings"
+TAGS_URL = f"{OLLAMA_BASE_URL}/tags"
 
 
 @dataclass
@@ -24,9 +25,46 @@ class OllamaEmbeddingError(RuntimeError):
     pass
 
 
+class OllamaModelNotFoundError(RuntimeError):
+    pass
+
+
 class OllamaClient:
     def __init__(self, model: str) -> None:
         self.model = model
+
+    @staticmethod
+    def _normalize_model_name(name: str) -> str:
+        return name[:-7] if name.endswith(":latest") else name
+
+    def ensure_model_available(self) -> None:
+        try:
+            response = requests.get(TAGS_URL, timeout=30)
+        except requests.ConnectionError as exc:
+            raise OllamaUnavailableError(
+                "Ollama is not running or is not reachable at http://localhost:11434."
+            ) from exc
+
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("models", [])
+        installed_names = {
+            str(item.get("name", "")).strip()
+            for item in models
+            if item.get("name")
+        }
+        normalized_installed = {
+            self._normalize_model_name(name) for name in installed_names
+        }
+        requested = self._normalize_model_name(self.model)
+
+        if requested not in normalized_installed and self.model not in installed_names:
+            available = ", ".join(sorted(installed_names)) or "none"
+            raise OllamaModelNotFoundError(
+                f"Ollama model `{self.model}` is not installed. "
+                f"Available local models: {available}. "
+                f"Install it with `ollama pull {requested}`."
+            )
 
     def generate(
         self,
@@ -52,6 +90,11 @@ class OllamaClient:
             raise OllamaUnavailableError(
                 "Ollama is not running or is not reachable at http://localhost:11434."
             ) from exc
+        if response.status_code == 404:
+            raise OllamaModelNotFoundError(
+                f"Ollama could not find generation model `{self.model}`. "
+                f"Install it with `ollama pull {self._normalize_model_name(self.model)}`."
+            )
         response.raise_for_status()
         payload = response.json()
         return OllamaResponse(text=payload.get("response", "").strip(), raw=payload)

@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 
 from src.config import CHUNKS_DIR, DEFAULT_EXPERIMENT_EMBEDDING_KEYS, EMBEDDING_MODELS, ensure_directories
+from src.embeddings import clear_cache
 from src.retriever import RetrieverAgent
 
 
@@ -31,6 +32,10 @@ def build_all_indexes(model_keys: list[str] | None = None) -> list[str]:
         agent = RetrieverAgent(model_key)
         agent.build_index_from_chunks(chunks_df)
         built_models.append(model_key)
+        # Release transformer weights between model runs so Windows machines with
+        # limited RAM / paging file are less likely to fail during the next load.
+        del agent
+        clear_cache()
     return built_models
 
 

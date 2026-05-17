@@ -58,6 +58,7 @@ class EmbeddingModel:
         if self.backend == "sentence_transformers":
             return self.model.encode(
                 prepared,
+                batch_size=16,
                 normalize_embeddings=True,
                 convert_to_numpy=True,
                 show_progress_bar=False,
@@ -71,6 +72,7 @@ class EmbeddingModel:
         if self.backend == "sentence_transformers":
             return self.model.encode(
                 prepared,
+                batch_size=16,
                 normalize_embeddings=True,
                 convert_to_numpy=True,
                 show_progress_bar=False,

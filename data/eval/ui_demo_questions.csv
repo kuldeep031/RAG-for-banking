@@ -1,0 +1,11 @@
+demo_id,category,question
+D001,operational_risk,What does RBI expect from a bank's operational risk management function?
+D002,operational_resilience,What does RBI mean by operational resilience for banks?
+D003,operational_resilience,Why is continuing critical operations during disruption important under RBI guidance?
+D004,credit_risk,What should a bank's credit risk policy include according to RBI?
+D005,credit_risk,Why does RBI emphasize an independent credit risk management function?
+D006,stress_testing,What should a Board-approved stress testing framework contain according to RBI?
+D007,stress_testing,How does stress testing support risk management in Indian banks?
+D008,model_risk,Why is model validation important in RBI's draft principles for management of model risks in credit?
+D009,governance,What does RBI expect from the board of a private sector bank in terms of governance?
+D010,comparison,Compare how RBI guidance addresses credit risk, operational risk, and model risk.

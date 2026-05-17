@@ -9,7 +9,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import CHUNKS_DIR, EMBEDDING_MODELS, MODEL_SPECS, RetrievalConfig, friendly_embedding_name
-from src.ollama_client import OllamaEmbeddingError, OllamaUnavailableError
+from src.ollama_client import (
+    OllamaEmbeddingError,
+    OllamaModelNotFoundError,
+    OllamaUnavailableError,
+)
 from src.rag_pipeline import SimpleBankingRiskRAG
 
 
@@ -62,6 +66,12 @@ def render_embedding_backend_error(model_key: str, error: Exception) -> None:
     st.warning(
         f"{friendly_model_name(model_key)} could not run its live embedding/query path."
     )
+    st.caption(str(error))
+
+
+def render_model_missing(error: Exception) -> None:
+    st.error("The local Ollama generation model required by this project is not installed.")
+    st.code("ollama pull llama3.2", language="powershell")
     st.caption(str(error))
 
 
@@ -153,6 +163,8 @@ def render_single_query_tab() -> None:
             st.error("Indexes are not built yet. Build them before opening the demo.")
         except OllamaUnavailableError as exc:
             render_ollama_unavailable(exc)
+        except OllamaModelNotFoundError as exc:
+            render_model_missing(exc)
         except OllamaEmbeddingError as exc:
             render_embedding_backend_error(model_key, exc)
         except Exception as exc:
@@ -201,7 +213,7 @@ def render_compare_tab() -> None:
                                 "total_seconds": round(float(output.timings.get("total_seconds", 0.0)), 2),
                             }
                         )
-                    except (OllamaUnavailableError, OllamaEmbeddingError) as exc:
+                    except (OllamaUnavailableError, OllamaEmbeddingError, OllamaModelNotFoundError) as exc:
                         failed_models.append((model_key, str(exc)))
                         comparison_rows.append(
                             {
@@ -229,6 +241,8 @@ def render_compare_tab() -> None:
             st.error("Indexes are not built yet. Build them before opening the demo.")
         except OllamaUnavailableError as exc:
             render_ollama_unavailable(exc)
+        except OllamaModelNotFoundError as exc:
+            render_model_missing(exc)
         except Exception as exc:
             st.exception(exc)
 
@@ -349,19 +363,32 @@ def render_recommendations_tab() -> None:
         st.caption("Approximate RAM Footprint (MB)")
         st.bar_chart(merged_df.set_index("embedding_model")["memory_mb_approx"])
 
-    # Finding optimal models
-    best_accuracy_model = merged_df.loc[merged_df["ndcg_at_5"].idxmax()]
+    # Finding optimal models for distinct use cases.
+    best_retrieval_model = merged_df.loc[merged_df["ndcg_at_5"].idxmax()]
+    best_decision_model = merged_df.loc[merged_df["label_accuracy"].idxmax()]
     lowest_cost_model = merged_df.loc[merged_df["memory_mb_approx"].idxmin()]
     fastest_model = merged_df.loc[merged_df["avg_total_seconds"].idxmin()]
 
     st.markdown("### 2. Recommendations for Banking Risk Use Cases")
+    st.caption(
+        "Live-query top scores are per-question retrieval similarities. Recommendations below are based on "
+        "aggregate benchmark metrics across the full RBI evaluation set."
+    )
 
     st.success(
-        f"**Accuracy-Critical Use Case (e.g. Regulatory Audits, High-Risk Scoring):**\n\n"
-        f"**Recommended Model:** {friendly_model_name(best_accuracy_model['embedding_model'])}\n\n"
-        f"**Reason:** Achieved the highest retrieval accuracy (nDCG@5: *{best_accuracy_model['ndcg_at_5']:.3f}*) "
-        f"and label accuracy (*{best_accuracy_model['label_accuracy']:.2f}*). For compliance-heavy banking workflows, "
-        f"this is the safest choice when retrieval completeness matters more than resource footprint."
+        f"**Retrieval-Critical Use Case (e.g. Regulatory Audits, Evidence Traceability):**\n\n"
+        f"**Recommended Model:** {friendly_model_name(best_retrieval_model['embedding_model'])}\n\n"
+        f"**Reason:** Achieved the highest aggregate retrieval quality on the RBI benchmark "
+        f"(nDCG@5: *{best_retrieval_model['ndcg_at_5']:.3f}*, MRR: *{best_retrieval_model['mrr']:.3f}*). "
+        f"This is the safest choice when the primary requirement is retrieving the strongest supporting evidence."
+    )
+
+    st.success(
+        f"**Decision-Accuracy Use Case (e.g. Risk Labeling / Automated Triage):**\n\n"
+        f"**Recommended Model:** {friendly_model_name(best_decision_model['embedding_model'])}\n\n"
+        f"**Reason:** Achieved the highest downstream label accuracy on the RBI benchmark "
+        f"(*{best_decision_model['label_accuracy']:.2f}*) with the strongest citation hit rate "
+        f"(*{best_decision_model['citation_hit_rate']:.2f}*). This is the best option when the final risk decision matters most."
     )
 
     st.info(

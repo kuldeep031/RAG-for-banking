@@ -5,12 +5,14 @@ import pandas as pd
 
 from src.config import (
     DEFAULT_EXPERIMENT_EMBEDDING_KEYS,
+    DEFAULT_OLLAMA_MODEL,
     EVAL_DIR,
     INDEX_DIR,
     MODEL_SPECS,
     RESULTS_DIR,
     RetrievalConfig,
 )
+from src.ollama_client import OllamaClient
 from src.evaluate_answers import compute_answer_metrics
 from src.evaluate_retrieval import summarize_retrieval_metrics
 from src.rag_pipeline import SimpleBankingRiskRAG
@@ -55,6 +57,7 @@ def run(
 ) -> str:
     selected_model_keys = model_keys or list(DEFAULT_EXPERIMENT_EMBEDDING_KEYS)
     _validate_required_indexes(selected_model_keys)
+    OllamaClient(DEFAULT_OLLAMA_MODEL).ensure_model_available()
 
     questions_path = EVAL_DIR / "questions.csv"
     relevance_path = EVAL_DIR / "gold_relevance.csv"

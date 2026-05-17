@@ -3,7 +3,7 @@ import re
 
 import requests
 
-from src.ollama_client import OllamaClient
+from src.ollama_client import OllamaClient, OllamaModelNotFoundError, OllamaUnavailableError
 
 
 ALLOWED_RISK_LABELS = {"Low", "Medium", "High", "Unknown"}
@@ -84,6 +84,46 @@ def _extract_json_object(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _extract_string_field(text: str, field_name: str) -> str:
+    pattern = rf'"{re.escape(field_name)}"\s*:\s*"((?:[^"\\]|\\.)*)"'
+    match = re.search(pattern, text, flags=re.DOTALL)
+    if not match:
+        return ""
+    value = match.group(1)
+    value = value.replace('\\"', '"').replace("\\n", " ").replace("\\t", " ")
+    return value.strip()
+
+
+def _extract_list_field(text: str, field_name: str) -> list[str]:
+    pattern = rf'"{re.escape(field_name)}"\s*:\s*\[(.*?)\]'
+    match = re.search(pattern, text, flags=re.DOTALL)
+    if not match:
+        return []
+    body = match.group(1)
+    items = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+    cleaned: list[str] = []
+    for item in items:
+        cleaned.append(item.replace('\\"', '"').strip())
+    return cleaned
+
+
+def _recover_partial_decision(text: str, retrieved_rows: list[dict], query: str) -> dict | None:
+    answer = _extract_string_field(text, "answer")
+    if not answer:
+        return None
+
+    parsed = {
+        "answer": answer,
+        "risk_label": _extract_string_field(text, "risk_label") or "Unknown",
+        "justification": _extract_string_field(text, "justification"),
+        "evidence_chunk_ids": _extract_list_field(text, "evidence_chunk_ids"),
+        "evidence_status": _extract_string_field(text, "evidence_status") or "unparsed",
+    }
+    recovered = _sanitize_decision(parsed, retrieved_rows, query)
+    recovered["evidence_status"] = "unparsed"
+    return recovered
+
+
 def _sanitize_decision(parsed: dict, retrieved_rows: list[dict], query: str) -> dict:
     valid_chunk_ids = {
         str(row.get("chunk_id"))
@@ -151,9 +191,11 @@ class DecisionAgent:
                 response = self.client.generate(
                     prompt,
                     temperature=0.0,
-                    options={"num_ctx": 4096, "num_predict": 220},
+                    options={"num_ctx": 4096, "num_predict": 320},
                 )
                 break
+            except (OllamaUnavailableError, OllamaModelNotFoundError):
+                raise
             except requests.HTTPError as exc:
                 last_error = exc
                 continue
@@ -173,6 +215,9 @@ class DecisionAgent:
             parsed = json.loads(json_text)
             return _sanitize_decision(parsed, used_rows, query)
         except json.JSONDecodeError:
+            recovered = _recover_partial_decision(raw_text, used_rows, query)
+            if recovered is not None:
+                return recovered
             return {
                 "answer": raw_text,
                 "risk_label": "Unknown",
